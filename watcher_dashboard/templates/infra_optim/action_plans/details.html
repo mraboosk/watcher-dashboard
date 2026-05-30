@@ -6,7 +6,21 @@
 <div class="row">
   <div class="col-sm-12">
     {% include "infra_optim/action_plans/_details_overview.html" %}
+
+    <div style="margin-bottom:16px">
+      <form method="post"
+            action="{% url 'horizon:admin:action_plans:start' action_plan.uuid %}"
+            style="display:inline">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-primary"
+          {% if action_plan.state != 'RECOMMENDED' and action_plan.state != 'FAILED' %}disabled{% endif %}>
+          {% trans "Apply Action Plan" %}
+        </button>
+      </form>
+    </div>
+
     <hr>
+
     <div id="efficacy_indicators">
       {{ related_efficacy_indicators_table.render }}
     </div>

@@ -15,47 +15,64 @@
 
 import logging
 
+from django import shortcuts
+from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
+from django import views as django_views
 import horizon.exceptions
+import horizon.messages
 from horizon import forms
 import horizon.tables
 import horizon.tabs
 from horizon.utils import memoized
 import horizon.workflows
 
+from horizon.utils import functions as utils
+
 from watcher_dashboard.api import watcher
 from watcher_dashboard.content.action_plans import tables
 from watcher_dashboard.content.actions import tables as action_tables
 from watcher_dashboard.content.audits import forms as wforms
+from watcher_dashboard.utils import utils as watcher_utils
 
 LOG = logging.getLogger(__name__)
 
 
-class IndexView(horizon.tables.DataTableView):
+class IndexView(horizon.tables.PagedTableMixin,
+                horizon.tables.DataTableView):
     table_class = tables.ActionPlansTable
     template_name = 'infra_optim/action_plans/index.html'
     page_title = _("Action Plans")
 
-    def get_context_data(self, **kwargs):
-        context = super(IndexView, self).get_context_data(**kwargs)
-        context['action_plans_count'] = self.get_action_plans_count()
-        return context
-
     def get_data(self):
         action_plans = []
+        marker, sort_dir = self._get_marker()
+        reversed_order = sort_dir == 'asc'
         search_opts = self.get_filters()
+        page_size = utils.get_page_size(self.request)
         try:
             action_plans = watcher.ActionPlan.list(
-                self.request, **search_opts)
+                self.request, limit=page_size + 1, marker=marker,
+                sort_key='created_at', sort_dir=sort_dir, **search_opts)
+            action_plans, self._has_more_data, self._has_prev_data = \
+                watcher_utils.update_pagination(
+                    action_plans, page_size, marker, reversed_order)
+            audits = watcher.Audit.list(self.request)
+            audit_map = {a.uuid: a for a in audits}
+            for ap in action_plans:
+                audit = audit_map.get(ap.audit_uuid)
+                if audit:
+                    ap.audit_name = audit.name or ap.audit_uuid
+                    ap.strategy_name = audit.strategy_name or '-'
+                else:
+                    ap.audit_name = ap.audit_uuid
+                    ap.strategy_name = '-'
         except Exception as exc:
             LOG.exception(exc)
             horizon.exceptions.handle(
                 self.request,
                 _("Unable to retrieve action_plan information."))
         return action_plans
-
-    def get_action_plans_count(self):
-        return len(self.get_data())
 
     def get_filters(self):
         filters = {}
@@ -81,9 +98,11 @@ class ArchiveView(forms.ModalFormView):
 class DetailView(horizon.tables.MultiTableView):
     table_classes = (
         action_tables.RelatedActionsTable,
-        tables.RelatedEfficacyIndicatorsTable)
+        tables.RelatedEfficacyIndicatorsTable,
+    )
     template_name = 'infra_optim/action_plans/details.html'
     page_title = _("Action Plan Details: {{ action_plan.uuid }}")
+    redirect_url = 'horizon:admin:action_plans:index'
 
     @memoized.memoized_method
     def _get_data(self):
@@ -104,14 +123,13 @@ class DetailView(horizon.tables.MultiTableView):
     def get_related_wactions_data(self):
         try:
             action_plan = self._get_data()
-            actions = watcher.Action.list(self.request,
-                                          action_plan=action_plan.uuid)
+            return watcher.Action.list(
+                self.request, action_plan=action_plan.uuid)
         except Exception as exc:
             LOG.exception(exc)
-            actions = []
             msg = _('Action list can not be retrieved.')
             horizon.exceptions.handle(self.request, msg)
-        return actions
+            return []
 
     def get_related_efficacy_indicators_data(self):
         try:
@@ -124,19 +142,31 @@ class DetailView(horizon.tables.MultiTableView):
             msg = _('Failed to get the efficacy indicators: %s') % str(exc)
             LOG.info(msg)
             horizon.messages.warning(self.request, msg)
-
+            efficacy_indicators = []
         return efficacy_indicators
 
     def get_context_data(self, **kwargs):
         context = super(DetailView, self).get_context_data(**kwargs)
         action_plan = self._get_data()
         context["action_plan"] = action_plan
-        LOG.info('*********************************')
-        LOG.info(action_plan)
-        LOG.info('*********************************')
+        try:
+            audit = watcher.Audit.get(self.request, action_plan.audit_uuid)
+        except Exception:
+            audit = None
+        context["audit"] = audit
         return context
 
-    def get_tabs(self, request, *args, **kwargs):
-        action_plan = self._get_data()
-        return self.tab_group_class(
-            request, action_plan=action_plan, **kwargs)
+
+class StartView(django_views.View):
+    redirect_url = 'horizon:admin:action_plans:detail'
+
+    def post(self, request, action_plan_uuid):
+        try:
+            watcher.ActionPlan.start(request, action_plan_uuid)
+            horizon.messages.success(
+                request, _('Action plan %s started.') % action_plan_uuid)
+        except Exception:
+            horizon.exceptions.handle(
+                request, _('Unable to start action plan.'))
+        return shortcuts.redirect(
+            reverse(self.redirect_url, args=[action_plan_uuid]))

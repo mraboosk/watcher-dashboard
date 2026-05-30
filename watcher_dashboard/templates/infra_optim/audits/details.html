@@ -1,9 +1,9 @@
 {% extends 'infra_optim/base.html' %}
 {% load i18n %}
-{% block title %}{% trans 'Audits: ' %}{{ audit.uuid }}{% endblock %}
+{% block title %}{% trans 'Audits: ' %}{{ audit.name }}{% endblock %}
 
 {% block page_header %}
-  {% include 'horizon/common/_page_header.html' with title=_('Audits: ')|add:audit.uuid %}
+  {% include 'horizon/common/_page_header.html' with title=_('Audits: ')|add:audit.name %}
 {% endblock page_header %}
 
 {% block main %}
@@ -13,6 +13,8 @@
     <dl class="dl-horizontal">
         <dt>{% trans "UUID" %}</dt>
         <dd>{{ audit.uuid|default:_("-") }}</dd>
+        <dt>{% trans "Name" %}</dt>
+        <dd>{{ audit.name|default:_("-") }}</dd>
         <dt>{% trans "Goal" %}</dt>
         <dd>{{ audit.goal_name|default:_("-") }}</dd>
         <dt>{% trans "Strategy" %}</dt>
@@ -21,19 +23,123 @@
         <dd>{{ audit.audit_type|default:_("-") }}</dd>
         <dt>{% trans "Auto Trigger" %}</dt>
         <dd>{{ audit.auto_trigger }}</dd>
-        {% url 'horizon:admin:audit_templates:detail' audit.audit_template_uuid as audit_template_url %}
         <dt>{% trans "State" %}</dt>
         <dd>{{ audit.state|default:_("-") }}</dd>
         <dt>{% trans "Created At" %}</dt>
         <dd>{{ audit.created_at|parse_isotime|default:_("-") }}</dd>
-        <dt>{% trans "Update At" %}</dt>
+        <dt>{% trans "Updated At" %}</dt>
         <dd>{{ audit.updated_at|parse_isotime|default:_("-") }}</dd>
     </dl>
   </div>
 </div>
+
 <div class="row">
   <div class="col-xs-12">
-    {{ related_action_plans_table.render }}
+    <h4>{% trans "Action Plans" %}</h4>
+    {% if action_plans_with_actions %}
+    <div class="panel-group" id="action-plans-accordion">
+      {% for item in action_plans_with_actions %}
+      <div class="panel panel-default">
+        <div class="panel-heading">
+          <div class="row">
+            <div class="col-sm-8">
+              <h5 class="panel-title" style="margin:0; line-height:2">
+                <a href="{% url 'horizon:admin:action_plans:detail' item.action_plan.uuid %}">
+                  {{ item.action_plan.uuid }}
+                </a>
+                &nbsp;
+                <span class="label label-{% if item.action_plan.state == 'SUCCEEDED' %}success{% elif item.action_plan.state == 'FAILED' %}danger{% elif item.action_plan.state == 'ONGOING' %}warning{% else %}default{% endif %}">
+                  {{ item.action_plan.state }}
+                </span>
+              </h5>
+            </div>
+            <div class="col-sm-4 text-right">
+              {% if item.actions %}
+              <a data-toggle="collapse" data-parent="#action-plans-accordion"
+                 href="#ap-actions-{{ forloop.counter }}" class="btn btn-xs btn-default">
+                {% trans "Show Actions" %} ({{ item.actions|length }})
+              </a>
+              {% endif %}
+              <form method="post"
+                    action="{% url 'horizon:admin:action_plans:start' item.action_plan.uuid %}"
+                    style="display:inline">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-xs btn-primary"
+                  {% if item.action_plan.state != 'RECOMMENDED' and item.action_plan.state != 'FAILED' %}disabled{% endif %}>
+                  {% trans "Apply" %}
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+        {% if item.actions %}
+        <div id="ap-actions-{{ forloop.counter }}" class="panel-collapse collapse{% if item.action_plan.state == 'SUCCEEDED' %} in{% endif %}">
+          <div class="panel-body" style="padding:0">
+            <table class="table table-condensed table-striped" style="margin:0">
+              <thead>
+                <tr>
+                  <th>{% trans "UUID" %}</th>
+                  <th>{% trans "Type" %}</th>
+                  <th>{% trans "State" %}</th>
+                  <th>{% trans "Parameters" %}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for action in item.actions %}
+                <tr>
+                  <td>
+                    <a href="{% url 'horizon:admin:actions:detail' action.uuid %}">
+                      {{ action.uuid }}
+                    </a>
+                  </td>
+                  <td>{{ action.action_type }}</td>
+                  <td>{{ action.state }}</td>
+                  <td>
+                    {% if action.input_parameters %}
+                    <a data-toggle="collapse"
+                       href="#params-{{ action.uuid|slice:':8' }}">
+                      {% trans "Show" %}
+                    </a>
+                    <div id="params-{{ action.uuid|slice:':8' }}" class="collapse">
+                      <ul class="list-unstyled" style="margin-top:4px">
+                        {% for k, v in action.input_parameters.items %}
+                        <li><strong>{{ k }}</strong>: {{ v }}</li>
+                        {% endfor %}
+                      </ul>
+                    </div>
+                    {% else %}
+                    —
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% if ap_has_prev or ap_has_more %}
+    <nav class="text-center">
+      <ul class="pagination">
+        {% if ap_has_prev %}
+        <li><a href="?ap_prev_marker={{ ap_prev_marker }}">{% trans "Previous" %}</a></li>
+        {% else %}
+        <li class="disabled"><span>{% trans "Previous" %}</span></li>
+        {% endif %}
+        {% if ap_has_more %}
+        <li><a href="?ap_marker={{ ap_marker }}">{% trans "Next" %}</a></li>
+        {% else %}
+        <li class="disabled"><span>{% trans "Next" %}</span></li>
+        {% endif %}
+      </ul>
+    </nav>
+    {% endif %}
+    {% else %}
+    <p class="text-muted">{% trans "No action plans found." %}</p>
+    {% endif %}
   </div>
 </div>
 

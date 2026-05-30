@@ -7,13 +7,17 @@
         <dt>{% trans "ID" %}</dt>
         <dd>{{ action_plan.uuid|default:_("-") }}</dd>
         {% url 'horizon:admin:audits:detail' action_plan.audit_uuid as audit_url %}
-        <dt>{% trans "Audit ID" %}</dt>
-        <dd><a href="{{ audit_url }}">{{ action_plan.audit_uuid|default:_("-") }}</a></dd>
+        <dt>{% trans "Audit" %}</dt>
+        <dd>
+          <a href="{{ audit_url }}">
+            {% if audit %}{{ audit.name|default:action_plan.audit_uuid }}{% else %}{{ action_plan.audit_uuid|default:_("-") }}{% endif %}
+          </a>
+        </dd>
         <dt>{% trans "State" %}</dt>
         <dd>{{ action_plan.state|default:_("-") }}</dd>
         <dt>{% trans "Created At" %}</dt>
         <dd>{{ action_plan.created_at|parse_isotime|default:_("-") }}</dd>
-        <dt>{% trans "Update At" %}</dt>
+        <dt>{% trans "Updated At" %}</dt>
         <dd>{{ action_plan.updated_at|parse_isotime|default:_("-") }}</dd>
     </dl>
 </div>
