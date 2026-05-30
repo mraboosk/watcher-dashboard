@@ -46,6 +46,14 @@ class IndexView(horizon.tables.DataTableView):
         search_opts = self.get_filters()
         try:
             actions = watcher.Action.list(self.request, **search_opts)
+            action_plans = watcher.ActionPlan.list(self.request)
+            ap_to_audit = {ap.uuid: ap.audit_uuid for ap in action_plans}
+            audits = watcher.Audit.list(self.request)
+            audit_names = {a.uuid: (a.name or a.uuid) for a in audits}
+            for action in actions:
+                audit_uuid = ap_to_audit.get(action.action_plan_uuid, '')
+                action.audit_uuid = audit_uuid
+                action.audit_name = audit_names.get(audit_uuid, '-')
         except Exception:
             horizon.exceptions.handle(
                 self.request,
@@ -92,6 +100,15 @@ class DetailView(horizon.tables.MultiTableView):
             action = watcher.Action.get(
                 self.request, action_uuid,
                 api_version=version)
+            action_plan = watcher.ActionPlan.get(
+                self.request, action.action_plan_uuid)
+            audit_uuid = action_plan.audit_uuid
+            action.audit_uuid = audit_uuid
+            try:
+                audit = watcher.Audit.get(self.request, audit_uuid)
+                action.audit_name = audit.name or audit_uuid
+            except Exception:
+                action.audit_name = audit_uuid
         except Exception:
             msg = (_('Unable to retrieve details for action "%s".')
                    % action_uuid)

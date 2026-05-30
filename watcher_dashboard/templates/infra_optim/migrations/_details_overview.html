@@ -1,0 +1,37 @@
+{% load i18n horizon %}
+
+<h3>{% trans "Migration Overview" %}</h3>
+
+<div class="info detail">
+  <dl class="dl-horizontal">
+    <dt>{% trans "ID" %}</dt>
+    <dd>{{ migration.id|default:_("-") }}</dd>
+
+    <dt>{% trans "Status" %}</dt>
+    <dd>{{ migration.status|default:_("-") }}</dd>
+
+    <dt>{% trans "Type" %}</dt>
+    <dd>{{ migration.migration_type|default:_("-") }}</dd>
+
+    <dt>{% trans "Instance UUID" %}</dt>
+    <dd>{{ migration.instance_uuid|default:_("-") }}</dd>
+
+    <dt>{% trans "Source Host" %}</dt>
+    <dd>{{ migration.source_compute|default:_("-") }}</dd>
+
+    <dt>{% trans "Source Node" %}</dt>
+    <dd>{{ migration.source_node|default:_("-") }}</dd>
+
+    <dt>{% trans "Destination Host" %}</dt>
+    <dd>{{ migration.dest_compute|default:_("-") }}</dd>
+
+    <dt>{% trans "Destination Node" %}</dt>
+    <dd>{{ migration.dest_node|default:_("-") }}</dd>
+
+    <dt>{% trans "Created At" %}</dt>
+    <dd>{{ migration.created_at|parse_isotime|default:_("-") }}</dd>
+
+    <dt>{% trans "Updated At" %}</dt>
+    <dd>{{ migration.updated_at|parse_isotime|default:_("-") }}</dd>
+  </dl>
+</div>

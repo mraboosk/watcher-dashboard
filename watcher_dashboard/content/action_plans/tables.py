@@ -162,9 +162,12 @@ class ActionPlansTable(horizon.tables.DataTable):
         verbose_name=_("UUID"),
         link="horizon:admin:action_plans:detail")
     audit = horizon.tables.Column(
-        'audit_uuid',
+        'audit_name',
         verbose_name=_('Audit'),
         link=get_audit_link)
+    strategy = horizon.tables.Column(
+        'strategy_name',
+        verbose_name=_('Strategy'))
     updated_at = horizon.tables.Column(
         'updated_at',
         filters=(filters.parse_isotime,
@@ -207,10 +210,6 @@ class RelatedActionPlansTable(horizon.tables.DataTable):
         'uuid',
         verbose_name=_("UUID"),
         link="horizon:admin:action_plans:detail")
-    audit = horizon.tables.Column(
-        'audit_uuid',
-        verbose_name=_('Audit'),
-        link=get_audit_link)
     updated_at = horizon.tables.Column(
         'updated_at',
         filters=(filters.parse_isotime,

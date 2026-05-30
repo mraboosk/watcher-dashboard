@@ -1,0 +1,15 @@
+{% extends 'infra_optim/base.html' %}
+{% load i18n %}
+{% block title %}{% trans 'Migration: ' %}{{ migration.id }}{% endblock %}
+
+{% block page_header %}
+  {% include 'horizon/common/_page_header.html' with title=_('Migration: ')|add:migration.id %}
+{% endblock page_header %}
+
+{% block main %}
+<div class="row">
+  <div class="col-sm-12">
+    {% include "infra_optim/migrations/_details_overview.html" %}
+  </div>
+</div>
+{% endblock %}

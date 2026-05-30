@@ -25,6 +25,7 @@ import horizon.exceptions
 from horizon import forms
 import horizon.tables
 import horizon.tabs
+from horizon.utils import functions as utils
 from horizon.utils import memoized
 import horizon.workflows
 import yaml
@@ -35,6 +36,7 @@ from watcher_dashboard.content.action_plans import tables as action_plan_tables
 from watcher_dashboard.content.audits import forms as wforms
 from watcher_dashboard.content.audits import tables
 from watcher_dashboard.content.audits import tabs as wtabs
+from watcher_dashboard.utils import utils as watcher_utils
 
 LOG = logging.getLogger(__name__)
 
@@ -111,7 +113,16 @@ class DetailView(horizon.tables.MultiTableView):
     tab_group_class = wtabs.AuditDetailTabs
     template_name = 'infra_optim/audits/details.html'
     redirect_url = 'horizon:admin:audits:index'
-    page_title = _("Audit Details: {{ audit.uuid }}")
+    page_title = _("Audit Details: {{ audit.name }}")
+
+    # Query parameters used to paginate the action plans accordion. They are
+    # distinct from the DataTable defaults ('marker'/'prev_marker') so they
+    # never clash with the related action plans table on the same view.
+    ap_pagination_param = 'ap_marker'
+    ap_prev_pagination_param = 'ap_prev_marker'
+
+    _ap_has_more = False
+    _ap_has_prev = False
 
     @memoized.memoized_method
     def max_version(self):
@@ -179,17 +190,33 @@ class DetailView(horizon.tables.MultiTableView):
             # Any unexpected issue: show the raw parameters.
             return params
 
-    def get_related_action_plans_data(self):
+    @memoized.memoized_method
+    def _get_action_plans(self):
+        prev_marker = self.request.GET.get(self.ap_prev_pagination_param)
+        if prev_marker is not None:
+            marker, sort_dir, reversed_order = prev_marker, 'asc', True
+        else:
+            marker = self.request.GET.get(self.ap_pagination_param)
+            sort_dir, reversed_order = 'desc', False
+        page_size = utils.get_page_size(self.request)
         try:
-            action_plan = self._get_data()
-            audits = watcher.ActionPlan.list(self.request,
-                                             audit=action_plan.uuid)
+            audit = self._get_data()
+            action_plans = watcher.ActionPlan.list(
+                self.request, audit=audit.uuid, limit=page_size + 1,
+                marker=marker, sort_key='created_at', sort_dir=sort_dir)
         except Exception as exc:
             LOG.exception(exc)
-            audits = []
             msg = _('Action plan list cannot be retrieved.')
             horizon.exceptions.handle(self.request, msg)
-        return audits
+            self._ap_has_more = self._ap_has_prev = False
+            return []
+        action_plans, self._ap_has_more, self._ap_has_prev = \
+            watcher_utils.update_pagination(
+                action_plans, page_size, marker, reversed_order)
+        return action_plans
+
+    def get_related_action_plans_data(self):
+        return self._get_action_plans()
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -200,6 +227,25 @@ class DetailView(horizon.tables.MultiTableView):
         context["audit_parameters_pretty"] = self._render_pretty_parameters(
             getattr(audit, 'parameters', None)
         )
+
+        action_plans = self._get_action_plans()
+        action_plans_with_actions = []
+        for ap in action_plans:
+            try:
+                actions = watcher.Action.list(
+                    self.request, action_plan=ap.uuid)
+            except Exception:
+                actions = []
+            action_plans_with_actions.append({
+                'action_plan': ap,
+                'actions': actions,
+            })
+        context['action_plans_with_actions'] = action_plans_with_actions
+        context['ap_has_more'] = self._ap_has_more
+        context['ap_has_prev'] = self._ap_has_prev
+        context['ap_marker'] = action_plans[-1].uuid if action_plans else ''
+        context['ap_prev_marker'] = \
+            action_plans[0].uuid if action_plans else ''
         return context
 
     def get_tabs(self, request, *args, **kwargs):

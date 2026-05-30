@@ -91,3 +91,28 @@ def safe_int_cast(value):
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def update_pagination(entities, page_size, marker, reversed_order=False):
+    """Trim an over-fetched list and report paging flags.
+
+    Callers fetch ``page_size + 1`` items so the presence of a next/previous
+    page can be detected without a separate count query. ``reversed_order`` is
+    True when navigating backwards (the API was queried with the sort direction
+    flipped), in which case the page is reversed back into display order.
+
+    Mirrors ``openstack_dashboard.api.nova.update_pagination``.
+    """
+    has_more_data = has_prev_data = False
+    if len(entities) > page_size:
+        has_more_data = True
+        entities.pop()
+        if marker is not None:
+            has_prev_data = True
+    elif reversed_order and marker is not None:
+        has_more_data = True
+    elif marker is not None:
+        has_prev_data = True
+    if reversed_order:
+        entities.reverse()
+    return entities, has_more_data, has_prev_data
