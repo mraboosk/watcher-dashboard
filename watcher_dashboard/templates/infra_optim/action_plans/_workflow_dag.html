@@ -1,0 +1,340 @@
+{% load i18n %}
+{% comment %}
+  Interactive DAG visualization of an action plan's actions.
+
+  Data is provided by DetailView via the `actions_dag` context variable
+  (a list of {uuid, action_type, state, parents[], parameters{}} dicts) and
+  handed to the script through Django's json_script filter so it is parsed
+  safely rather than interpolated into markup.
+
+  All CSS is scoped under `.ap-dag` and all element ids are prefixed with
+  `apdag-` so nothing collides with Horizon/Bootstrap globals.
+{% endcomment %}
+
+<style>
+  .ap-dag{
+    --st-pending:#9aa7b3;
+    --st-ongoing:#1f6cb4;
+    --st-succeeded:#3c8c3c;
+    --st-failed:#cf4b3b;
+    --st-nostate:#b9c2cc;
+    --dag-blue:#1f6cb4;
+    --dag-text:#34495e;
+    --dag-muted:#7b8a9a;
+    --dag-border:#d8dfe6;
+    color:var(--dag-text);
+    margin:18px 0;
+  }
+  .ap-dag *{box-sizing:border-box}
+
+  .ap-dag .panel{
+    background:#fff;border:1px solid var(--dag-border);border-radius:2px;
+    box-shadow:0 1px 1px rgba(20,40,60,.04);
+  }
+  .ap-dag .panel-head{
+    display:flex;align-items:center;justify-content:space-between;gap:14px;
+    padding:13px 18px;border-bottom:1px solid var(--dag-border);
+  }
+  .ap-dag .panel-head h2{font-size:16px;font-weight:600;margin:0;color:#2b3a4a}
+  .ap-dag .panel-head h2 small{font-weight:400;color:var(--dag-muted);font-size:13px;margin-left:8px}
+
+  .ap-dag .controls{display:flex;align-items:center;gap:8px}
+  .ap-dag .seg{display:inline-flex;border:1px solid var(--dag-border);border-radius:3px;overflow:hidden}
+  .ap-dag .seg button{
+    appearance:none;border:0;background:#fff;color:var(--dag-text);
+    font:inherit;font-size:12.5px;padding:5px 12px;cursor:pointer;line-height:1.2;
+  }
+  .ap-dag .seg button + button{border-left:1px solid var(--dag-border)}
+  .ap-dag .seg button.on{background:var(--dag-blue);color:#fff}
+  .ap-dag .ctl-btn{
+    appearance:none;border:1px solid var(--dag-border);background:#fff;border-radius:3px;
+    font:inherit;font-size:12.5px;padding:5px 12px;cursor:pointer;color:var(--dag-text);
+  }
+  .ap-dag .ctl-btn:hover{background:#f0f3f6}
+
+  .ap-dag .legend{display:flex;gap:16px;flex-wrap:wrap;padding:10px 18px;border-bottom:1px solid var(--dag-border);background:#fbfcfd}
+  .ap-dag .legend span{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--dag-muted)}
+  .ap-dag .legend i{width:11px;height:11px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px currentColor}
+
+  .ap-dag .canvas-scroll{overflow:auto;background:
+      radial-gradient(circle, #e7ebef 1px, transparent 1px);
+    background-size:22px 22px;background-position:-1px -1px;
+  }
+  .ap-dag .canvas{position:relative;margin:0 auto}
+  .ap-dag .edges{position:absolute;inset:0;overflow:visible;pointer-events:none}
+  .ap-dag .edges path{fill:none;stroke:#b7c2cd;stroke-width:1.6}
+  .ap-dag .edges path.hl{stroke:var(--dag-blue);stroke-width:2.4}
+
+  .ap-dag .node{
+    position:absolute;border-radius:50%;background:#fff;
+    border:3px solid var(--st-nostate);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;cursor:pointer;overflow:hidden;
+    transition:width .26s cubic-bezier(.4,.05,.2,1),height .26s cubic-bezier(.4,.05,.2,1),
+               left .26s cubic-bezier(.4,.05,.2,1),top .26s cubic-bezier(.4,.05,.2,1),
+               box-shadow .2s, border-color .2s, opacity .2s;
+    box-shadow:0 1px 3px rgba(20,40,60,.12);
+    z-index:2;
+  }
+  .ap-dag .node:hover{box-shadow:0 3px 10px rgba(20,40,60,.2)}
+  .ap-dag .node .ntype{
+    font-size:12px;font-weight:600;color:#33414f;line-height:1.15;
+    padding:0 8px;word-break:break-word;
+  }
+  .ap-dag .node .nstate{
+    font-size:9px;text-transform:uppercase;letter-spacing:.05em;font-weight:700;
+    margin-top:3px;opacity:.85;
+  }
+  .ap-dag .node.dim{opacity:.32}
+  .ap-dag .node.expanded{z-index:5;cursor:default;box-shadow:0 8px 26px rgba(20,40,60,.28)}
+
+  .ap-dag .node .detail{display:none;width:100%;padding:0 16px;animation:apdag-fade .28s ease both}
+  .ap-dag .node.expanded .detail{display:block}
+  .ap-dag .node.expanded .ntype{font-size:14px;margin-top:2px}
+  .ap-dag .node.expanded .nstate{margin-bottom:8px}
+  .ap-dag .detail .hd{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--dag-muted);
+    font-weight:700;border-bottom:1px solid #eceff2;padding-bottom:4px;margin-bottom:6px}
+  .ap-dag .detail .kv{display:flex;justify-content:space-between;gap:10px;
+    font-family:"SFMono-Regular",Menlo,Consolas,monospace;font-size:10.5px;line-height:1.7;text-align:left}
+  .ap-dag .detail .kv .k{color:var(--dag-muted)}
+  .ap-dag .detail .kv .v{color:#2b3a4a;font-weight:600;text-align:right;word-break:break-all}
+  .ap-dag .detail .empty{color:var(--dag-muted);font-style:italic;font-size:10.5px}
+  .ap-dag .detail .uuidline{font-family:"SFMono-Regular",Menlo,Consolas,monospace;font-size:9.5px;color:#aab4be;margin-top:7px;word-break:break-all}
+  @keyframes apdag-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  .ap-dag .hint{padding:9px 18px;font-size:12px;color:var(--dag-muted);border-top:1px solid var(--dag-border);background:#fbfcfd}
+  .ap-dag .empty-state{padding:26px 18px;font-size:13px;color:var(--dag-muted);text-align:center}
+</style>
+
+<div class="ap-dag">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>{% trans "Action Workflow" %} <small id="apdag-countlbl"></small></h2>
+      {% if actions_dag %}
+      <div class="controls">
+        <div class="seg" id="apdag-orient">
+          <button data-o="TB" class="on">{% trans "Top → Bottom" %}</button>
+          <button data-o="LR">{% trans "Left → Right" %}</button>
+        </div>
+        <button class="ctl-btn" id="apdag-reset">{% trans "Collapse all" %}</button>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if actions_dag %}
+    <div class="legend">
+      <span style="color:var(--st-pending)"><i></i>{% trans "Pending" %}</span>
+      <span style="color:var(--st-ongoing)"><i></i>{% trans "Ongoing" %}</span>
+      <span style="color:var(--st-succeeded)"><i></i>{% trans "Succeeded" %}</span>
+      <span style="color:var(--st-failed)"><i></i>{% trans "Failed" %}</span>
+    </div>
+
+    <div class="canvas-scroll">
+      <div class="canvas" id="apdag-canvas">
+        <svg class="edges" id="apdag-edges"></svg>
+      </div>
+    </div>
+
+    <div class="hint">{% trans "Each circle is an action, labelled by its type. Arrows point from an action to the actions that depend on it (its children). Click a circle to expand it and inspect the action's input parameters." %}</div>
+    {% else %}
+    <div class="empty-state">{% trans "This action plan has no actions to display." %}</div>
+    {% endif %}
+  </div>
+</div>
+
+{{ actions_dag|json_script:"apdag-data" }}
+
+{% if actions_dag %}
+<script>
+(function(){
+  const ACTIONS = JSON.parse(document.getElementById('apdag-data').textContent);
+  if(!ACTIONS.length) return;
+
+  const root = document.querySelector('.ap-dag');
+  const cssVar = name => getComputedStyle(root).getPropertyValue(name).trim();
+  const STATE_COLORS = {
+    PENDING:   cssVar('--st-pending'),
+    ONGOING:   cssVar('--st-ongoing'),
+    SUCCEEDED: cssVar('--st-succeeded'),
+    FAILED:    cssVar('--st-failed'),
+  };
+  const NOSTATE = cssVar('--st-nostate');
+  const colorOf = s => STATE_COLORS[s] || NOSTATE;
+
+  /* ---------------- layout (layered / longest-path ranking) ---------------- */
+  const NODE = 86;     // collapsed diameter
+  const EXP  = 224;    // expanded diameter
+  const GAP_MAIN = 150;  // gap between layers
+  const GAP_CROSS = 56;  // gap between siblings in a layer
+  const PAD = 60;
+
+  const byId = {};
+  ACTIONS.forEach(a => byId[a.uuid] = a);
+  // keep only parents that exist in this plan (guards against stale refs)
+  ACTIONS.forEach(a => { a.parents = (a.parents || []).filter(p => byId[p]); });
+
+  function computeLayers(){
+    const memo = {};
+    const visiting = {};
+    function depth(id){
+      if(memo[id]!=null) return memo[id];
+      if(visiting[id]) return 0;        // cycle guard (should not happen on a DAG)
+      visiting[id] = true;
+      const p = byId[id].parents;
+      memo[id] = p.length ? Math.max(...p.map(depth))+1 : 0;
+      visiting[id] = false;
+      return memo[id];
+    }
+    ACTIONS.forEach(a=>depth(a.uuid));
+    return memo;
+  }
+
+  let ORIENT = 'TB';
+  let expandedId = null;
+  const layerOf = computeLayers();
+  const maxLayer = Math.max(...Object.values(layerOf));
+
+  const layers = [];
+  for(let l=0;l<=maxLayer;l++) layers.push(ACTIONS.filter(a=>layerOf[a.uuid]===l));
+  const maxInLayer = Math.max(...layers.map(g=>g.length));
+
+  const canvas = document.getElementById('apdag-canvas');
+  const edgesSvg = document.getElementById('apdag-edges');
+  const pos = {}; // uuid -> {cx,cy}
+
+  function computePositions(){
+    const main = NODE + GAP_MAIN;
+    const cross = NODE + GAP_CROSS;
+    const crossSpan = (maxInLayer-1)*cross;
+
+    layers.forEach((group, l)=>{
+      const span = (group.length-1)*cross;
+      const offset = (crossSpan - span)/2;
+      group.forEach((a,i)=>{
+        const along = PAD + NODE/2 + l*main;
+        const acrossPos = PAD + NODE/2 + offset + i*cross;
+        if(ORIENT==='TB') pos[a.uuid] = {cx:acrossPos, cy:along};
+        else              pos[a.uuid] = {cx:along, cy:acrossPos};
+      });
+    });
+
+    const alongTotal = PAD*2 + NODE + maxLayer*main;
+    const crossTotal = PAD*2 + NODE + crossSpan;
+    if(ORIENT==='TB'){ canvas.style.width = crossTotal+'px'; canvas.style.height = alongTotal+'px'; }
+    else             { canvas.style.width = alongTotal+'px';  canvas.style.height = crossTotal+'px'; }
+  }
+
+  /* ---------------- rendering ---------------- */
+  function render(){
+    computePositions();
+    ACTIONS.forEach(a=>{
+      let n = document.getElementById('apdag-n-'+a.uuid);
+      if(!n){
+        n = document.createElement('div');
+        n.className='node'; n.id='apdag-n-'+a.uuid;
+        const ntype = document.createElement('div'); ntype.className='ntype';
+        ntype.textContent = a.action_type || '—';
+        const nstate = document.createElement('div'); nstate.className='nstate';
+        nstate.textContent = a.state;
+        nstate.style.color = colorOf(a.state);
+        const detail = document.createElement('div'); detail.className='detail';
+        buildDetail(detail, a);
+        n.appendChild(ntype); n.appendChild(nstate); n.appendChild(detail);
+        n.style.borderColor = colorOf(a.state);
+        n.addEventListener('click', ()=>toggle(a.uuid));
+        canvas.appendChild(n);
+      }
+      placeNode(a, n);
+    });
+    drawEdges();
+    document.getElementById('apdag-countlbl').textContent =
+      ACTIONS.length+' actions · '+(maxLayer+1)+' stages';
+  }
+
+  function buildDetail(detail, a){
+    const hd = document.createElement('div'); hd.className='hd';
+    hd.textContent = 'input parameters';
+    detail.appendChild(hd);
+    const params = a.parameters || {};
+    const keys = Object.keys(params);
+    if(keys.length){
+      keys.forEach(k=>{
+        const v = params[k];
+        const row = document.createElement('div'); row.className='kv';
+        const kEl = document.createElement('span'); kEl.className='k'; kEl.textContent = k;
+        const vEl = document.createElement('span'); vEl.className='v';
+        vEl.textContent = (v !== null && typeof v === 'object') ? JSON.stringify(v) : String(v);
+        row.appendChild(kEl); row.appendChild(vEl);
+        detail.appendChild(row);
+      });
+    } else {
+      const none = document.createElement('div'); none.className='empty';
+      none.textContent = 'none';
+      detail.appendChild(none);
+    }
+    const uuid = document.createElement('div'); uuid.className='uuidline';
+    uuid.textContent = a.uuid;
+    detail.appendChild(uuid);
+  }
+
+  function placeNode(a,n){
+    const p = pos[a.uuid];
+    const exp = (a.uuid===expandedId);
+    const d = exp?EXP:NODE;
+    n.style.width = d+'px'; n.style.height = d+'px';
+    n.style.left = (p.cx - d/2)+'px';
+    n.style.top  = (p.cy - d/2)+'px';
+    n.classList.toggle('expanded', exp);
+    n.classList.toggle('dim', expandedId!==null && !exp);
+  }
+
+  function drawEdges(){
+    edgesSvg.innerHTML='';
+    ACTIONS.forEach(child=>{
+      child.parents.forEach(pid=>{
+        const a = pos[pid], b = pos[child.uuid];
+        if(!a||!b) return;
+        const hl = (pid===expandedId || child.uuid===expandedId);
+        const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+        path.setAttribute('d', edgePath(a,b));
+        if(hl) path.classList.add('hl');
+        edgesSvg.appendChild(path);
+      });
+    });
+  }
+
+  function edgePath(a,b){
+    if(ORIENT==='TB'){
+      const my=(a.cy+b.cy)/2;
+      return 'M '+a.cx+' '+a.cy+' C '+a.cx+' '+my+', '+b.cx+' '+my+', '+b.cx+' '+b.cy;
+    } else {
+      const mx=(a.cx+b.cx)/2;
+      return 'M '+a.cx+' '+a.cy+' C '+mx+' '+a.cy+', '+mx+' '+b.cy+', '+b.cx+' '+b.cy;
+    }
+  }
+
+  function relayout(){
+    ACTIONS.forEach(a=>placeNode(a, document.getElementById('apdag-n-'+a.uuid)));
+    drawEdges();
+  }
+
+  function toggle(id){
+    expandedId = (expandedId===id)? null : id;
+    relayout();
+  }
+
+  /* ---------------- controls ---------------- */
+  document.getElementById('apdag-orient').addEventListener('click', e=>{
+    const btn = e.target.closest('button'); if(!btn) return;
+    ORIENT = btn.dataset.o;
+    [...e.currentTarget.children].forEach(b=>b.classList.toggle('on', b===btn));
+    relayout();
+  });
+  document.getElementById('apdag-reset').addEventListener('click', ()=>{
+    if(expandedId!==null){ expandedId=null; relayout(); }
+  });
+
+  render();
+})();
+</script>
+{% endif %}

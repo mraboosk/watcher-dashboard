@@ -132,7 +132,8 @@ class DetailView(horizon.tables.MultiTableView):
                 redirect=self.redirect_url)
         return action_plan
 
-    def get_related_wactions_data(self):
+    @memoized.memoized_method
+    def _get_actions(self):
         try:
             action_plan = self._get_data()
             return watcher.Action.list(
@@ -142,6 +143,41 @@ class DetailView(horizon.tables.MultiTableView):
             msg = _('Action list can not be retrieved.')
             horizon.exceptions.handle(self.request, msg)
             return []
+
+    def get_related_wactions_data(self):
+        return self._get_actions()
+
+    def _get_actions_dag(self):
+        """Build a JSON-serializable node list describing the action DAG.
+
+        Each node carries the fields the workflow visualization needs:
+        uuid, action_type, state, the list of parent action UUIDs (the
+        dependency edges) and the action's input parameters. When the
+        Watcher API does not report ``parents`` (older/sequential plans),
+        edges are derived from the ``next_uuid`` chain instead.
+        """
+        actions = self._get_actions()
+        nodes = []
+        by_id = {}
+        for action in actions:
+            node = {
+                'uuid': getattr(action, 'uuid', ''),
+                'action_type': getattr(action, 'action_type', '') or '',
+                'state': getattr(action, 'state', None) or 'NO STATE',
+                'parents': list(getattr(action, 'parents', None) or []),
+                'parameters': dict(
+                    getattr(action, 'input_parameters', None) or {}),
+            }
+            nodes.append(node)
+            by_id[node['uuid']] = node
+
+        if not any(node['parents'] for node in nodes):
+            for action in actions:
+                next_uuid = getattr(action, 'next_uuid', None)
+                target = by_id.get(next_uuid)
+                if target is not None:
+                    target['parents'].append(getattr(action, 'uuid', ''))
+        return nodes
 
     def get_related_efficacy_indicators_data(self):
         efficacy_indicators = []
@@ -167,6 +203,7 @@ class DetailView(horizon.tables.MultiTableView):
         except Exception:
             audit = None
         context["audit"] = audit
+        context["actions_dag"] = self._get_actions_dag()
         return context
 
     def get_tables(self):
