@@ -23,6 +23,8 @@ urlpatterns = [
             views.IndexView.as_view(), name='index'),
     re_path(r'^(?P<action_plan_uuid>[^/]+)/detail$',
             views.DetailView.as_view(), name='detail'),
+    re_path(r'^(?P<action_plan_uuid>[^/]+)/start$',
+            views.StartView.as_view(), name='start'),
     re_path(r'^archive/$',
             views.ArchiveView.as_view(), name='archive'),
 ]

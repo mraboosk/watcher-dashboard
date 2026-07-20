@@ -13,6 +13,7 @@
 import logging
 
 from django.conf import settings
+from horizon.utils import memoized
 from openstack_dashboard.api import base
 from watcherclient import client as wc
 from watcherclient.common import api_versioning
@@ -33,8 +34,16 @@ MV_START_END = '1.1'
 MV_SKIP_ACTION = '1.5'
 
 
+@memoized.memoized
 def get_client(request, required=MIN_DEFAULT):
     """Return a watcher client pinned to the given microversion.
+
+    The client is memoized per request (keyed on the request object and
+    the requested microversion), so every Watcher API call made while
+    serving a single request reuses one ``requests.Session`` and its
+    keep-alive connection pool instead of opening a new connection each
+    time. The cache uses a weak reference to the request, so it is
+    released once the request finishes.
 
     :param request: The current Django HTTP request.
     :param required: Microversion string (e.g. ``'1.0'``,
@@ -55,17 +64,21 @@ def get_client(request, required=MIN_DEFAULT):
     )
 
 
+@memoized.memoized
 def get_max_version(request):
     """Discover the server's maximum supported microversion.
 
     Queries the Watcher API root endpoint and extracts the
-    ``max_version`` field from the response body.
+    ``max_version`` field from the response body. The result is memoized
+    per request so repeated discovery across views/forms within a single
+    request issues only one round-trip and reuses the shared default
+    client.
 
     :param request: The current Django HTTP request.
     :returns: The max version string, or ``None`` on failure.
     """
     try:
-        client = get_client(request)
+        client = get_client(request, required=MIN_DEFAULT)
         _resp, body = client.http_client.json_request(
             'GET', '/')
         version_info = (

@@ -125,11 +125,10 @@ class UpdateRow(horizon.tables.Row):
         return action_plan
 
 
-def format_global_efficacy(action_plan):
-    template_name = 'infra_optim/action_plans/_global_efficacy.html'
-
+def build_global_efficacy_dict(action_plan):
+    """Map each global efficacy indicator name to its formatted value."""
     global_efficacy_dict = {}
-    for indicator in action_plan.global_efficacy:
+    for indicator in getattr(action_plan, 'global_efficacy', None) or []:
         global_efficacy = watcher.EfficacyIndicator(indicator)
         if (global_efficacy.value is not None and
                 global_efficacy.unit is not None):
@@ -138,9 +137,14 @@ def format_global_efficacy(action_plan):
         elif global_efficacy.value is not None:
             global_efficacy_dict[global_efficacy.name] = str(
                 global_efficacy.value)
+    return global_efficacy_dict
+
+
+def format_global_efficacy(action_plan):
+    template_name = 'infra_optim/action_plans/_global_efficacy.html'
 
     context = {
-        "global_indicators": global_efficacy_dict,
+        "global_indicators": build_global_efficacy_dict(action_plan),
     }
 
     return template.loader.render_to_string(template_name, context)
@@ -162,9 +166,12 @@ class ActionPlansTable(horizon.tables.DataTable):
         verbose_name=_("UUID"),
         link="horizon:admin:action_plans:detail")
     audit = horizon.tables.Column(
-        'audit_uuid',
+        'audit_name',
         verbose_name=_('Audit'),
         link=get_audit_link)
+    strategy = horizon.tables.Column(
+        'strategy_name',
+        verbose_name=_('Strategy'))
     updated_at = horizon.tables.Column(
         'updated_at',
         filters=(filters.parse_isotime,
@@ -207,10 +214,6 @@ class RelatedActionPlansTable(horizon.tables.DataTable):
         'uuid',
         verbose_name=_("UUID"),
         link="horizon:admin:action_plans:detail")
-    audit = horizon.tables.Column(
-        'audit_uuid',
-        verbose_name=_('Audit'),
-        link=get_audit_link)
     updated_at = horizon.tables.Column(
         'updated_at',
         filters=(filters.parse_isotime,
