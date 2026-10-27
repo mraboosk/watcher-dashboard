@@ -29,31 +29,41 @@ from watcher_dashboard.common import client as common_client
 from watcher_dashboard.content.actions import forms as action_forms
 from watcher_dashboard.content.actions import tables
 from watcher_dashboard.content.actions import tabs as wtabs
+from watcher_dashboard.utils import utils as watcher_utils
 
 
-class IndexView(horizon.tables.DataTableView):
+class IndexView(horizon.tables.PagedTableMixin,
+                horizon.tables.DataTableView):
     table_class = tables.ActionsTable
     template_name = 'infra_optim/actions/index.html'
     page_title = _("Actions")
 
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        context['audits_count'] = self.get_actions_count()
-        return context
-
     def get_data(self):
         actions = []
+        marker, sort_dir = self._get_marker()
+        reversed_order = sort_dir == 'asc'
         search_opts = self.get_filters()
+        page_size = watcher_utils.DEFAULT_PAGE_SIZE
         try:
-            actions = watcher.Action.list(self.request, **search_opts)
+            actions = watcher.Action.list(
+                self.request, limit=page_size + 1, marker=marker,
+                sort_key='created_at', sort_dir=sort_dir, **search_opts)
+            actions, self._has_more_data, self._has_prev_data = \
+                watcher_utils.update_pagination(
+                    actions, page_size, marker, reversed_order)
+            action_plans = watcher.ActionPlan.list(self.request)
+            ap_to_audit = {ap.uuid: ap.audit_uuid for ap in action_plans}
+            audits = watcher.Audit.list(self.request)
+            audit_names = {a.uuid: (a.name or a.uuid) for a in audits}
+            for action in actions:
+                audit_uuid = ap_to_audit.get(action.action_plan_uuid, '')
+                action.audit_uuid = audit_uuid
+                action.audit_name = audit_names.get(audit_uuid, '-')
         except Exception:
             horizon.exceptions.handle(
                 self.request,
                 _("Unable to retrieve action information."))
         return actions
-
-    def get_actions_count(self):
-        return len(self.get_data())
 
     def get_filters(self):
         filters = {}
@@ -92,6 +102,15 @@ class DetailView(horizon.tables.MultiTableView):
             action = watcher.Action.get(
                 self.request, action_uuid,
                 api_version=version)
+            action_plan = watcher.ActionPlan.get(
+                self.request, action.action_plan_uuid)
+            audit_uuid = action_plan.audit_uuid
+            action.audit_uuid = audit_uuid
+            try:
+                audit = watcher.Audit.get(self.request, audit_uuid)
+                action.audit_name = audit.name or audit_uuid
+            except Exception:
+                action.audit_name = audit_uuid
         except Exception:
             msg = (_('Unable to retrieve details for action "%s".')
                    % action_uuid)

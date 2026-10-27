@@ -76,6 +76,36 @@ class WatcherClientAPITests(test.APITestCase):
 
             wc.assert_called_with(self.request, api_version='1.1')
 
+    def test_get_client_memoized_per_request(self):
+        # All Watcher API calls within a single request must reuse one
+        # client (and its connection pool) instead of opening a new
+        # connection each time.
+        with mock.patch.object(common_client.base, 'url_for',
+                               return_value='http://watcher'), \
+                mock.patch.object(common_client.wc, 'get_client') as gc:
+            gc.return_value = mock.Mock()
+
+            first = common_client.get_client(self.request)
+            second = common_client.get_client(self.request)
+
+            self.assertIs(first, second)
+            gc.assert_called_once()
+
+    def test_get_client_separate_clients_per_microversion(self):
+        # Different microversions need separately pinned clients.
+        with mock.patch.object(common_client.base, 'url_for',
+                               return_value='http://watcher'), \
+                mock.patch.object(common_client.wc, 'get_client') as gc:
+            gc.side_effect = [mock.Mock(), mock.Mock()]
+
+            default = common_client.get_client(
+                self.request, required=common_client.MIN_DEFAULT)
+            start_end = common_client.get_client(
+                self.request, required=common_client.MV_START_END)
+
+            self.assertIsNot(default, start_end)
+            self.assertEqual(gc.call_count, 2)
+
     def test_is_microversion_supported(self):
         self.assertTrue(
             common_client.is_microversion_supported('1.1', '1.0'))
